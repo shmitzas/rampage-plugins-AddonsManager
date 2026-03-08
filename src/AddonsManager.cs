@@ -2,21 +2,19 @@ using SwiftlyS2.Shared.Plugins;
 using SwiftlyS2.Shared;
 using AddonsManager.Config;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Options;
 using Microsoft.Extensions.DependencyInjection;
-using SwiftlyS2.Shared.Events;
-using SwiftlyS2.Shared.SteamAPI;
-using SwiftlyS2.Shared.Commands;
+using AddonsManager.Utils;
+using AddonsManager.SteamWorkshop;
+using AddonsManager.Commands;
+using AddonsManager.Hooks;
+using AddonsManager.Clients;
 
 namespace AddonsManager;
 
-[PluginMetadata(Id = "AddonsManager", Version = "1.0.2", Name = "Addons Manager", Author = "Swiftly Development Team", Description = "No description.")]
-public partial class AddonsManager(ISwiftlyCore core) : BasePlugin(core)
+[PluginMetadata(Id = "AddonsManager", Version = "2.0.0", Name = "Addons Manager", Author = "Swiftly Development Team", Description = "No description.")]
+public class AddonsManager(ISwiftlyCore core) : BasePlugin(core)
 {
-    public static IOptionsMonitor<AddonsConfig> Config { get; private set; } = null!;
-    public static List<string> MountedAddons = [];
-    public static Task? DisplayTask = null;
-    public static bool SteamAPIInitialized = false;
+    public IServiceProvider? ServiceProvider;
 
     public override void ConfigureSharedInterface(IInterfaceManager interfaceManager)
     {
@@ -37,87 +35,26 @@ public partial class AddonsManager(ISwiftlyCore core) : BasePlugin(core)
 
         ServiceCollection services = new();
         services.AddSwiftly(Core)
-            .AddOptions<AddonsConfig>()
-            .BindConfiguration("Main");
+                .AddSingleton<AddonsUtilities>()
+                .AddSingleton<AddonsWorkshopManager>()
+                .AddSingleton<AddonsCommands>()
+                .AddSingleton<AddonsClients>()
+                .AddSingleton<AddonsHooks>()
+                .AddOptionsWithValidateOnStart<AddonsConfig>()
+                .BindConfiguration("Main");
 
-        var provider = services.BuildServiceProvider();
-        Config = provider.GetRequiredService<IOptionsMonitor<AddonsConfig>>();
+        ServiceProvider = services.BuildServiceProvider();
 
-        Core.Scheduler.RepeatBySeconds(0.1f, ShowDownloadProgress);
+        _ = ServiceProvider.GetRequiredService<AddonsUtilities>();
+        var workshopManager = ServiceProvider.GetRequiredService<AddonsWorkshopManager>();
+        _ = ServiceProvider.GetRequiredService<AddonsCommands>();
+        _ = ServiceProvider.GetRequiredService<AddonsClients>();
+        _ = ServiceProvider.GetRequiredService<AddonsHooks>();
 
-        DisplayTask = Task.Run(async () =>
-        {
-            while (true)
-            {
-                if (DisplayTask!.IsCanceled || DisplayTask.IsCompleted) return;
-
-                ShowDownloadProgress();
-                await Task.Delay(100);
-            }
-        });
-
-        SetupHooks();
+        Core.Scheduler.RepeatBySeconds(1.0f, workshopManager.PrintDownloadProgress);
     }
 
     public override void Unload()
     {
-        DisplayTask?.Dispose();
-        DisplayTask = null;
-    }
-
-    [EventListener<EventDelegates.OnStartupServer>]
-    public void OnStartupServer()
-    {
-        Core.GameFileSystem.RemoveSearchPath("", "GAME");
-        Core.GameFileSystem.RemoveSearchPath("", "DEFAULT_WRITE_PATH");
-
-        RefreshAddons();
-    }
-
-    private Callback<DownloadItemResult_t>? _downloadItemResult;
-
-    [EventListener<EventDelegates.OnSteamAPIActivated>]
-    public void OnSteamAPIActivated()
-    {
-        SteamAPIInitialized = true;
-
-        _downloadItemResult = Callback<DownloadItemResult_t>.Create(OnDownloadItemResult);
-        RefreshAddons(true);
-    }
-
-    [Command("searchpath")]
-    public void ViewSearchPaths(ICommandContext context)
-    {
-        if (context.IsSentByPlayer)
-        {
-            context.Reply("[AddonsManager] This command can only be used from the server console.");
-            return;
-        }
-
-        Core.GameFileSystem.PrintSearchPaths();
-    }
-
-    [Command("downloadaddon")]
-    public void DownloadAddonCommand(ICommandContext context)
-    {
-        if (context.IsSentByPlayer)
-        {
-            context.Reply("[AddonsManager] This command can only be used from the server console.");
-            return;
-        }
-
-        if (!SteamAPIInitialized)
-        {
-            context.Reply("[AddonsManager] Steam API is not initialized.");
-            return;
-        }
-
-        if (context.Args.Length < 1)
-        {
-            context.Reply("[AddonsManager] Usage: downloadaddon <workshop_id>");
-            return;
-        }
-
-        DownloadAddon(context.Args[0], true, true);
     }
 }

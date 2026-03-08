@@ -2,7 +2,7 @@ namespace AddonsManager.Structs;
 
 public static class SteamErrorMessage
 {
-    public static List<string> Errors = [
+    public static readonly List<string> Errors = [
         "No result.",
         "Success.",
         "Generic failure.",
