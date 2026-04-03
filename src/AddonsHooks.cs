@@ -61,7 +61,18 @@ public class AddonsHooks
                     else if (!pRequest->m_pKV->GetName().Equals("changelevel", StringComparison.CurrentCultureIgnoreCase))
                     {
                         if (pRequest->m_pKV->GetName().Equals("map_workshop", StringComparison.CurrentCultureIgnoreCase))
-                            Utilities.SetCurrentWorkshopMap(pRequest->m_pKV->GetString("customgamemode", ""));
+                        {
+                            // customgamemode holds the workshop map ID for host_workshop_map requests (matches MultiAddonManager behaviour).
+                            // m_Addons.Value is used as a fallback in case the KV key is unavailable.
+                            var workshopMapId = pRequest->m_pKV->GetString("customgamemode", "");
+                            if (string.IsNullOrEmpty(workshopMapId))
+                                workshopMapId = pRequest->m_Addons.Value;
+
+                            if (!string.IsNullOrEmpty(workshopMapId))
+                                Utilities.SetCurrentWorkshopMap(workshopMapId);
+                            else
+                                Utilities.ClearCurrentWorkshopMap();
+                        }
                         else
                             Utilities.ClearCurrentWorkshopMap();
                     }
@@ -98,7 +109,7 @@ public class AddonsHooks
             {
                 return (server, client) =>
                 {
-                    var steamId64 = client->Base.SteamID.GetSteamID64();
+                    var steamId64 = core.Memory.ToServerSideClient((nint)client).SteamID.GetSteamID64();
                     var clientInfo = Clients.GetClientInfo((long)steamId64);
                     if (
                         config.CurrentValue.CacheClientsWithAddons && config.CurrentValue.CacheClientsDurationInSeconds > 0 &&
@@ -164,7 +175,7 @@ public class AddonsHooks
         Core.GameFileSystem.RemoveSearchPath("", "GAME");
         Core.GameFileSystem.RemoveSearchPath("", "DEFAULT_WRITE_PATH");
 
-        WorkshopManager.RefreshAddons(true);
+        WorkshopManager.RefreshAddons();
     }
 
     [ServerNetMessageInternalHandler]
