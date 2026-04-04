@@ -19,6 +19,9 @@ public class AddonsClients
     private AddonsUtilities Utilities;
     private ConcurrentDictionary<long, ClientAddonInfo> Clients = [];
     private IOptionsMonitor<AddonsConfig> Config;
+    // Persists slot→steamId across disconnects so SendNetMessage can find client state
+    // even when the player is no longer in PlayerManager (e.g. map-change CHANGELEVEL phase).
+    private ConcurrentDictionary<int, long> _slotToSteamId = [];
 
     public AddonsClients(ISwiftlyCore core, AddonsUtilities utils, IOptionsMonitor<AddonsConfig> config)
     {
@@ -31,6 +34,11 @@ public class AddonsClients
     public ConcurrentDictionary<long, ClientAddonInfo> GetClients()
     {
         return Clients;
+    }
+
+    public long? GetSteamIdBySlot(int slot)
+    {
+        return _slotToSteamId.TryGetValue(slot, out var steamId) ? steamId : null;
     }
 
     public ClientAddonInfo GetClientInfo(long steamId)
@@ -61,26 +69,41 @@ public class AddonsClients
     public void OnClientConnected(IOnClientConnectedEvent @event)
     {
         var addons = GetClientAddons();
-        if (addons.Count == 0) return;
-
         var player = Core.PlayerManager.GetPlayer(@event.PlayerId);
         if (player == null) return;
 
         var clientInfo = GetClientInfo((long)player.UnauthorizedSteamID);
+        var elapsed = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - clientInfo.LastActiveTime;
+
+        Core.Logger.LogInformation("[OnClientConnected] steamId={SteamID} currentPendingAddon={Pending} downloadedAddons=[{Downloaded}] elapsedMs={Elapsed} timeoutMs={Timeout} serverAddons=[{ServerAddons}]",
+            player.UnauthorizedSteamID, clientInfo.CurrentPendingAddon, string.Join(",", clientInfo.DownloadedAddons),
+            elapsed, Config.CurrentValue.ExtraAddonsTimeoutInSeconds * 1000, string.Join(",", addons));
+
+        if (addons.Count == 0)
+        {
+            Core.Logger.LogDebug("[OnClientConnected] no server addons configured, skipping");
+            return;
+        }
 
         if (!string.IsNullOrEmpty(clientInfo.CurrentPendingAddon))
         {
-            if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - clientInfo.LastActiveTime > Config.CurrentValue.ExtraAddonsTimeoutInSeconds * 1000)
+            if (elapsed > Config.CurrentValue.ExtraAddonsTimeoutInSeconds * 1000)
             {
-                Core.Logger.LogDebug("Client {SteamID} has reconnected after the timeout or did not receive the addon message, will not add addon {addonId} to the downloaded list.", player.UnauthorizedSteamID, clientInfo.CurrentPendingAddon);
+                Core.Logger.LogInformation("[OnClientConnected] client {SteamID} reconnected after timeout ({Elapsed}ms > {Timeout}ms), not crediting addon {Addon}",
+                    player.UnauthorizedSteamID, elapsed, Config.CurrentValue.ExtraAddonsTimeoutInSeconds * 1000, clientInfo.CurrentPendingAddon);
             }
             else
             {
-                Core.Logger.LogDebug("Client {SteamID} has connected within the interval with the pending addon {addonId}, will send next addon in SendNetMessage hook.", player.UnauthorizedSteamID, clientInfo.CurrentPendingAddon);
+                Core.Logger.LogInformation("[OnClientConnected] client {SteamID} reconnected within interval, crediting addon {Addon}",
+                    player.UnauthorizedSteamID, clientInfo.CurrentPendingAddon);
                 clientInfo.DownloadedAddons.Add(clientInfo.CurrentPendingAddon);
             }
 
             clientInfo.CurrentPendingAddon = string.Empty;
+        }
+        else
+        {
+            Core.Logger.LogInformation("[OnClientConnected] client {SteamID} has no pending addon", player.UnauthorizedSteamID);
         }
 
         clientInfo.LastActiveTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -93,18 +116,25 @@ public class AddonsClients
         if (player == null) return;
 
         var clientInfo = GetClientInfo((long)player.UnauthorizedSteamID);
+        Core.Logger.LogInformation("[OnClientDisconnected] steamId={SteamID} currentPendingAddon={Pending} downloadedAddons=[{Downloaded}]",
+            player.UnauthorizedSteamID, clientInfo.CurrentPendingAddon, string.Join(",", clientInfo.DownloadedAddons));
+        // Store slot→steamId so SendNetMessage can find the client after PM removal.
+        _slotToSteamId[@event.PlayerId] = (long)player.UnauthorizedSteamID;
         clientInfo.LastActiveTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     }
 
     [EventListener<EventDelegates.OnClientPutInServer>]
     public void OnClientPutInServer(IOnClientPutInServerEvent @event)
     {
-        if (Config.CurrentValue.CacheClientsWithAddons) return;
-
         var player = Core.PlayerManager.GetPlayer(@event.PlayerId);
         if (player == null) return;
 
         var clientInfo = GetClientInfo((long)player.UnauthorizedSteamID);
+        Core.Logger.LogDebug("[OnClientPutInServer] steamId={SteamID} cacheEnabled={Cache} downloadedAddons=[{Downloaded}]",
+            player.UnauthorizedSteamID, Config.CurrentValue.CacheClientsWithAddons, string.Join(",", clientInfo.DownloadedAddons));
+
+        if (Config.CurrentValue.CacheClientsWithAddons) return;
+
         clientInfo.DownloadedAddons.Clear();
     }
 
