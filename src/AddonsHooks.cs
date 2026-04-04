@@ -58,14 +58,15 @@ public class AddonsHooks
                         else if (bValveMap)
                             Utilities.ClearCurrentWorkshopMap();
                     }
-                    else if (!pRequest->m_pKV->GetName().Equals("changelevel", StringComparison.CurrentCultureIgnoreCase))
+                    else if (!pRequest->m_pKV->GetName().Equals("changelevel", StringComparison.OrdinalIgnoreCase))
                     {
-                        if (pRequest->m_pKV->GetName().Equals("map_workshop", StringComparison.CurrentCultureIgnoreCase))
+                        if (pRequest->m_pKV->GetName().Equals("map_workshop", StringComparison.OrdinalIgnoreCase))
                         {
-                            // customgamemode holds the workshop map ID for host_workshop_map requests (matches MultiAddonManager behaviour).
-                            // m_Addons.Value is used as a fallback in case the KV key is unavailable.
                             var workshopMapId = pRequest->m_pKV->GetString("customgamemode", "");
-                            if (string.IsNullOrEmpty(workshopMapId))
+                            // Only fall back to m_Addons.Value if it looks like a single workshop ID (no commas).
+                            // Prevents corruption if the same CHostStateRequest struct is reused and m_Addons
+                            // already contains a comma-separated list from a previous hook invocation.
+                            if (string.IsNullOrEmpty(workshopMapId) && !pRequest->m_Addons.Value.Contains(','))
                                 workshopMapId = pRequest->m_Addons.Value;
 
                             if (!string.IsNullOrEmpty(workshopMapId))
@@ -76,12 +77,18 @@ public class AddonsHooks
                         else
                             Utilities.ClearCurrentWorkshopMap();
                     }
+                    else
+                    {
+                        Utilities.ClearCurrentWorkshopMap();
+                    }
 
                     if (!string.IsNullOrEmpty(pRequest->m_Addons.Value) && Core.GameFileSystem.IsDirectory(pRequest->m_Addons.Value, "OFFICIAL_ADDONS"))
                         Utilities.SetCurrentWorkshopMap(pRequest->m_Addons.Value);
 
                     if (Utilities.GetMountedAddons().Count == 0)
                     {
+                        if (!string.IsNullOrEmpty(Utilities.GetCurrentWorkshopMap()))
+                            pRequest->m_Addons = Utilities.GetCurrentWorkshopMap();
                         next()(hostStateManager, pRequest);
                         return;
                     }
@@ -109,11 +116,13 @@ public class AddonsHooks
             {
                 return (server, client) =>
                 {
-                    var steamId64 = core.Memory.ToServerSideClient((nint)client).SteamID.GetSteamID64();
+                    var clientPtr = (nint)client;
+                    var steamId64 = core.Memory.ToServerSideClient(clientPtr).SteamID.GetSteamID64();
                     var clientInfo = Clients.GetClientInfo((long)steamId64);
+
                     if (
                         config.CurrentValue.CacheClientsWithAddons && config.CurrentValue.CacheClientsDurationInSeconds > 0 &&
-                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - clientInfo.LastActiveTime > config.CurrentValue.ExtraAddonsTimeoutInSeconds * 1000
+                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - clientInfo.LastActiveTime > config.CurrentValue.CacheClientsDurationInSeconds * 1000
                     )
                     {
                         Core.Logger.LogDebug("Client {SteamID} has not connected for a while, clearing the cache", steamId64);
@@ -126,6 +135,7 @@ public class AddonsHooks
                     var originalAddons = addons.Value;
 
                     var clientAddons = Clients.GetClientAddons();
+
                     if (clientAddons.Count == 0)
                     {
                         next()(server, client);
@@ -135,15 +145,13 @@ public class AddonsHooks
                     if (!clientInfo.DownloadedAddons.Contains(clientAddons.First()))
                         clientInfo.CurrentPendingAddon = clientAddons.First();
 
-                    var iAddonCount = clientAddons.Count;
-                    if (!string.IsNullOrEmpty(clientInfo.CurrentPendingAddon) && iAddonCount > 1)
-                    {
-                        var iNextAddonIndex = clientAddons.IndexOf(clientInfo.CurrentPendingAddon) + 1;
-                        if (iNextAddonIndex > 0 && iNextAddonIndex < clientAddons.Count)
-                        {
-                            clientAddons.RemoveRange(iNextAddonIndex, clientAddons.Count - iNextAddonIndex);
-                        }
-                    }
+                    // Keep only already-downloaded addons plus the single current pending one.
+                    // Sending undownloaded addons to the client causes CS2 to perform a signature
+                    // check that fails instantly, crashing or disconnecting the client before it
+                    // can be told to download anything (mirrors MultiAddonManager behaviour).
+                    clientAddons.RemoveAll(a =>
+                        !clientInfo.DownloadedAddons.Contains(a) &&
+                        !a.Equals(clientInfo.CurrentPendingAddon, StringComparison.OrdinalIgnoreCase));
 
                     addons.Value = Utilities.VectorToString(clientAddons);
 
@@ -175,6 +183,26 @@ public class AddonsHooks
         Core.GameFileSystem.RemoveSearchPath("", "GAME");
         Core.GameFileSystem.RemoveSearchPath("", "DEFAULT_WRITE_PATH");
 
+        // If CurrentWorkshopMap was cleared while the server was downloading the workshop map
+        // (e.g. a null-KV SetPendingHostStateRequest fired with empty m_Addons + bValveMap==true
+        // for the previous valve map), recover it from the level name before RefreshAddons runs
+        // so that GetClientAddons() includes it and clients are prompted to download it.
+        if (string.IsNullOrEmpty(Utilities.GetCurrentWorkshopMap()))
+        {
+            var mapName = Core.Engine.GlobalVars.MapName.Value;
+            if (!string.IsNullOrEmpty(mapName))
+            {
+                var parts = mapName.Split('/');
+                if (parts.Length >= 2 &&
+                    parts[0].Equals("workshop", StringComparison.OrdinalIgnoreCase) &&
+                    ulong.TryParse(parts[1], out _))
+                {
+                    Core.Logger.LogDebug("Recovering CurrentWorkshopMap from map name: {MapId}", parts[1]);
+                    Utilities.SetCurrentWorkshopMap(parts[1]);
+                }
+            }
+        }
+
         WorkshopManager.RefreshAddons();
     }
 
@@ -182,14 +210,26 @@ public class AddonsHooks
     public HookResult SendNetMessage(CNETMsg_SignonState signonState, int playerid)
     {
         var player = Core.PlayerManager.GetPlayer(playerid);
-        if (player == null) return HookResult.Continue;
+        long steamId;
+        if (player == null)
+        {
+            var sid = Clients.GetSteamIdBySlot(playerid);
+            if (sid == null) return HookResult.Continue;
+            steamId = sid.Value;
+        }
+        else
+        {
+            steamId = (long)player.UnauthorizedSteamID;
+        }
 
-        var clientInfo = Clients.GetClientInfo((long)player.UnauthorizedSteamID);
+        var clientInfo = Clients.GetClientInfo(steamId);
+        clientInfo.LastActiveTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var clientAddons = Clients.GetClientAddons();
 
         if (signonState.SignonState == SignonState_t.SIGNONSTATE_CHANGELEVEL)
         {
             var addonsList = Utilities.StringToVector(signonState.Addons);
+
             if (addonsList.Count > 1)
             {
                 signonState.Addons = addonsList.First();
@@ -210,7 +250,7 @@ public class AddonsHooks
 
         if (clientAddons.Count == 0) return HookResult.Continue;
 
-        Core.Logger.LogDebug("Client {SteamID} has pending addons: {Addons}", player.UnauthorizedSteamID, string.Join(", ", clientAddons));
+        Core.Logger.LogDebug("Client {SteamID} has pending addons: {Addons}", steamId, string.Join(", ", clientAddons));
 
         clientInfo.CurrentPendingAddon = clientAddons.First();
         signonState.Addons = clientAddons.First();

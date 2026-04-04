@@ -19,6 +19,9 @@ public class AddonsClients
     private AddonsUtilities Utilities;
     private ConcurrentDictionary<long, ClientAddonInfo> Clients = [];
     private IOptionsMonitor<AddonsConfig> Config;
+    // Persists slot→steamId across disconnects so SendNetMessage can find client state
+    // even when the player is no longer in PlayerManager (e.g. map-change CHANGELEVEL phase).
+    private ConcurrentDictionary<int, long> _slotToSteamId = [];
 
     public AddonsClients(ISwiftlyCore core, AddonsUtilities utils, IOptionsMonitor<AddonsConfig> config)
     {
@@ -31,6 +34,11 @@ public class AddonsClients
     public ConcurrentDictionary<long, ClientAddonInfo> GetClients()
     {
         return Clients;
+    }
+
+    public long? GetSteamIdBySlot(int slot)
+    {
+        return _slotToSteamId.TryGetValue(slot, out var steamId) ? steamId : null;
     }
 
     public ClientAddonInfo GetClientInfo(long steamId)
@@ -93,6 +101,8 @@ public class AddonsClients
         if (player == null) return;
 
         var clientInfo = GetClientInfo((long)player.UnauthorizedSteamID);
+        // Store slot→steamId so SendNetMessage can find the client after PM removal.
+        _slotToSteamId[@event.PlayerId] = (long)player.UnauthorizedSteamID;
         clientInfo.LastActiveTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     }
 
@@ -103,6 +113,11 @@ public class AddonsClients
         if (player == null) return;
 
         var clientInfo = GetClientInfo((long)player.UnauthorizedSteamID);
+        Core.Logger.LogDebug("[OnClientPutInServer] steamId={SteamID} cacheEnabled={Cache} downloadedAddons=[{Downloaded}]",
+            player.UnauthorizedSteamID, Config.CurrentValue.CacheClientsWithAddons, string.Join(",", clientInfo.DownloadedAddons));
+
+        if (Config.CurrentValue.CacheClientsWithAddons) return;
+
         clientInfo.DownloadedAddons.Clear();
     }
 

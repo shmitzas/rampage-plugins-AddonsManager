@@ -20,7 +20,8 @@ public class AddonsUtilities
 
     public List<string> StringToVector(string input)
     {
-        return input.Split(',').Select(s => s.Trim()).ToList();
+        if (string.IsNullOrEmpty(input)) return [];
+        return input.Split(',').Select(s => s.Trim()).Where(s => s.Length > 0).ToList();
     }
 
     public string VectorToString(List<string> vector)
