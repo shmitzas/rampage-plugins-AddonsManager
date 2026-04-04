@@ -31,10 +31,6 @@
     <Compile Remove="examples\**\*.cs" />
   </ItemGroup>
 
-  <ItemGroup>
-    <None Include=".github\copilot-instructions.md" />
-  </ItemGroup>
-
   <Target Name="CreateZip" AfterTargets="Publish">
     <ItemGroup>
       <PublishFiles Include="$(PublishDir)**\*.*" />
