@@ -99,6 +99,8 @@ public class AddonsClients
     [EventListener<EventDelegates.OnClientPutInServer>]
     public void OnClientPutInServer(IOnClientPutInServerEvent @event)
     {
+        if (Config.CurrentValue.CacheClientsWithAddons) return;
+
         var player = Core.PlayerManager.GetPlayer(@event.PlayerId);
         if (player == null) return;
 
