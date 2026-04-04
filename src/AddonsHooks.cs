@@ -118,7 +118,7 @@ public class AddonsHooks
                 {
                     var clientPtr = (nint)client;
                     var steamId64 = core.Memory.ToServerSideClient(clientPtr).SteamID.GetSteamID64();
-                    var clientInfo = Clients.GetClientInfo((long)steamId64);
+                    var clientInfo = Clients.GetClientInfo(steamId64);
 
                     if (
                         config.CurrentValue.CacheClientsWithAddons && config.CurrentValue.CacheClientsDurationInSeconds > 0 &&
@@ -210,7 +210,7 @@ public class AddonsHooks
     public HookResult SendNetMessage(CNETMsg_SignonState signonState, int playerid)
     {
         var player = Core.PlayerManager.GetPlayer(playerid);
-        long steamId;
+        ulong steamId;
         if (player == null)
         {
             var sid = Clients.GetSteamIdBySlot(playerid);
@@ -219,7 +219,7 @@ public class AddonsHooks
         }
         else
         {
-            steamId = (long)player.UnauthorizedSteamID;
+            steamId = player.UnauthorizedSteamID;
         }
 
         var clientInfo = Clients.GetClientInfo(steamId);
