@@ -24,7 +24,7 @@ public class AddonsHooks
     private AddonsUtilities Utilities;
 
     public unsafe delegate void SetPendingHostStateRequestDelegate(nint hostStateManager, CHostStateRequest* pRequest);
-    public unsafe delegate void ReplyConnection(nint server, CServerSideClient* client);
+    public delegate void ReplyConnection(nint server, nint client);
     public delegate ulong ScriptGetAddon();
 
     private IUnmanagedFunction<SetPendingHostStateRequestDelegate>? _SetPendingHostStateRequestDelegate;
@@ -116,7 +116,7 @@ public class AddonsHooks
             {
                 return (server, client) =>
                 {
-                    var clientPtr = (nint)client;
+                    var clientPtr = client;
                     var steamId64 = core.Memory.ToServerSideClient(clientPtr).SteamID.GetSteamID64();
                     var clientInfo = Clients.GetClientInfo((long)steamId64);
 
