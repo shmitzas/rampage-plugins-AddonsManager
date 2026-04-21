@@ -17,11 +17,11 @@ public class AddonsClients
 {
     private ISwiftlyCore Core;
     private AddonsUtilities Utilities;
-    private ConcurrentDictionary<long, ClientAddonInfo> Clients = [];
+    private ConcurrentDictionary<ulong, ClientAddonInfo> Clients = [];
     private IOptionsMonitor<AddonsConfig> Config;
     // Persists slot→steamId across disconnects so SendNetMessage can find client state
     // even when the player is no longer in PlayerManager (e.g. map-change CHANGELEVEL phase).
-    private ConcurrentDictionary<int, long> _slotToSteamId = [];
+    private ConcurrentDictionary<int, ulong> _slotToSteamId = [];
 
     public AddonsClients(ISwiftlyCore core, AddonsUtilities utils, IOptionsMonitor<AddonsConfig> config)
     {
@@ -31,17 +31,17 @@ public class AddonsClients
         Core.Registrator.Register(this);
     }
 
-    public ConcurrentDictionary<long, ClientAddonInfo> GetClients()
+    public ConcurrentDictionary<ulong, ClientAddonInfo> GetClients()
     {
         return Clients;
     }
 
-    public long? GetSteamIdBySlot(int slot)
+    public ulong? GetSteamIdBySlot(int slot)
     {
         return _slotToSteamId.TryGetValue(slot, out var steamId) ? steamId : null;
     }
 
-    public ClientAddonInfo GetClientInfo(long steamId)
+    public ClientAddonInfo GetClientInfo(ulong steamId)
     {
         return Clients.GetOrAdd(steamId, _ => new ClientAddonInfo
         {
@@ -74,7 +74,7 @@ public class AddonsClients
         var player = Core.PlayerManager.GetPlayer(@event.PlayerId);
         if (player == null) return;
 
-        var clientInfo = GetClientInfo((long)player.UnauthorizedSteamID);
+        var clientInfo = GetClientInfo(player.UnauthorizedSteamID);
 
         if (!string.IsNullOrEmpty(clientInfo.CurrentPendingAddon))
         {
@@ -100,9 +100,9 @@ public class AddonsClients
         var player = Core.PlayerManager.GetPlayer(@event.PlayerId);
         if (player == null) return;
 
-        var clientInfo = GetClientInfo((long)player.UnauthorizedSteamID);
+        var clientInfo = GetClientInfo(player.UnauthorizedSteamID);
         // Store slot→steamId so SendNetMessage can find the client after PM removal.
-        _slotToSteamId[@event.PlayerId] = (long)player.UnauthorizedSteamID;
+        _slotToSteamId[@event.PlayerId] = player.UnauthorizedSteamID;
         clientInfo.LastActiveTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     }
 
@@ -112,7 +112,7 @@ public class AddonsClients
         var player = Core.PlayerManager.GetPlayer(@event.PlayerId);
         if (player == null) return;
 
-        var clientInfo = GetClientInfo((long)player.UnauthorizedSteamID);
+        var clientInfo = GetClientInfo(player.UnauthorizedSteamID);
         Core.Logger.LogDebug("[OnClientPutInServer] steamId={SteamID} cacheEnabled={Cache} downloadedAddons=[{Downloaded}]",
             player.UnauthorizedSteamID, Config.CurrentValue.CacheClientsWithAddons, string.Join(",", clientInfo.DownloadedAddons));
 
