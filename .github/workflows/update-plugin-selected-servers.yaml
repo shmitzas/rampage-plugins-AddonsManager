@@ -56,7 +56,7 @@ jobs:
           python3 .github/workflows/update_plugin_single_server.py \
             --server "${{ github.event.inputs.server }}" \
             --plugin-name "${{ env.PLUGIN_NAME }}" \
-            --plugin-source "$(pwd)/${{ env.PLUGIN_NAME }}/bin/Release/net10.0/publish" \
+            --plugin-source "$(pwd)/build/publish/${{ env.PLUGIN_NAME }}" \
             --plugin-destination "/game/csgo/addons/swiftlys2/plugins/${{ env.PLUGIN_NAME }}" \
             --servers-config '${{ secrets.SFTP_SERVERS_CONFIG }}' \
             --password-prod "${{ secrets.SFTP_PASSWORD_PROD }}" \
