@@ -38,10 +38,10 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Restore dependencies
-        run: dotnet restore ${{ env.PLUGIN_NAME }}.csproj
+        run: dotnet restore ${{ env.PLUGIN_NAME }}/${{ env.PLUGIN_NAME }}.csproj
 
       - name: Build plugin (Release)
-        run: dotnet publish ${{ env.PLUGIN_NAME }}.csproj -c Release --no-restore
+        run: dotnet publish ${{ env.PLUGIN_NAME }}/${{ env.PLUGIN_NAME }}.csproj -c Release --no-restore
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -56,7 +56,7 @@ jobs:
           python3 .github/workflows/update_plugin_single_server.py \
             --server "${{ github.event.inputs.server }}" \
             --plugin-name "${{ env.PLUGIN_NAME }}" \
-            --plugin-source "$(pwd)/build/publish/${{ env.PLUGIN_NAME }}" \
+            --plugin-source "$(pwd)/${{ env.PLUGIN_NAME }}/bin/Release/net10.0/publish" \
             --plugin-destination "/game/csgo/addons/swiftlys2/plugins/${{ env.PLUGIN_NAME }}" \
             --servers-config '${{ secrets.SFTP_SERVERS_CONFIG }}' \
             --password-prod "${{ secrets.SFTP_PASSWORD_PROD }}" \
