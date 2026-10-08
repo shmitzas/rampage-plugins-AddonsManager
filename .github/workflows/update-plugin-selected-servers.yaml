@@ -1,0 +1,63 @@
+name: 🎯 Deploy to selected servers
+
+on:
+  workflow_dispatch:
+    inputs:
+      server:
+        description: 'Server name to deploy to'
+        required: true
+        type: choice
+        options:
+          - test
+          - test2
+          - public
+          - mix1
+          - mix2
+          - awp
+          - deagle
+          - retake1
+          - retake2
+          - surfgunxp
+          - 1v1
+          - forfun
+          - zombieswarm
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve plugin name from repo
+        run: echo "PLUGIN_NAME=${GITHUB_REPOSITORY##*/rampage-plugins-}" >> $GITHUB_ENV
+
+      - name: Setup .NET 10.0
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.PLUGIN_NAME }}.csproj
+
+      - name: Build plugin (Release)
+        run: dotnet publish ${{ env.PLUGIN_NAME }}.csproj -c Release --no-restore
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: pip install paramiko
+        
+      - name: Upload plugin to selected server via SFTP
+        run: |
+          python3 .github/workflows/update_plugin_single_server.py \
+            --server "${{ github.event.inputs.server }}" \
+            --plugin-name "${{ env.PLUGIN_NAME }}" \
+            --plugin-source "$(pwd)/build/publish/${{ env.PLUGIN_NAME }}" \
+            --plugin-destination "/game/csgo/addons/swiftlys2/plugins/${{ env.PLUGIN_NAME }}" \
+            --servers-config '${{ secrets.SFTP_SERVERS_CONFIG }}' \
+            --password-prod "${{ secrets.SFTP_PASSWORD_PROD }}" \
+            --password-test "${{ secrets.SFTP_PASSWORD_TEST }}"
